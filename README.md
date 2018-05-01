@@ -12,6 +12,10 @@ O [exercício original de análise](https://github.com/wikimedia-research/Discov
 
 `reports`: notebooks das análises.
 
+## Relatório
+
+Aqui está o link para o relatório final da atividade: http://rpubs.com/Caio-batista/lab2cp4
+
 ## O que já temos
 
 Como as análises propostas na tarefa original são em sua maioria sobre resultados de buscas e a navegação que acontece depois delas, já há código para ler os dados originais e criar algumas métricas sobre buscas nas sessões de usuário e sobre a navegaçao depois de cada busca em `code/import-events_to_searches.R`. Executar `Rscript code/import-events_to_searches.R` gera o arquivo `data/search_data.csv`. O script `import-events_to_searches.R` em si é a melhor documentação do que significa cada coluna em `data/search_data.csv`.

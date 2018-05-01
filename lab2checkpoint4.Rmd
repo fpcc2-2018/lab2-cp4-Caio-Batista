@@ -1,0 +1,320 @@
+---
+title: 'Lab 2 - CP 4: Análise completa'
+author: "Caio Oliveira"
+date: "April 27, 2018"
+output:
+ html_document:
+  toc: true
+  toc_float: true
+---
+# INTRODUÇÃO 
+
+<p>Nesse laboratório o objetivo era utilizar os [dados do Wikimedia]("https://github.com/wikimedia-research/Discovery-Hiring-Analyst-2016/raw/master/events_log.csv.gz") para resolver uma série de perguntas que foram utilizadas no processo de seleção da vaga para Data Analyst. Antes da resposta da primeira questão, aqui vemos uma análise prévia dos dados, com o intuito principalmente de minimizar os erros nas respostas para cada uma das perguntas, retirar amostras e procurar correlações.</p>
+<p>Para cada uma das partes dessa análise prévia, bem como para as respostas também, existe uma breve explicação do motivo da visualização.</p>
+
+<p>Neste setup além de carregar os dados e as bibliotecas da linguagem que serão necessárias, também é definida aqui a função Mode, que simula a métrica Moda, que vai ser muito útil durante todas as respostas para sumarização.</p>
+```{r setup, message=FALSE, results='hide'}
+library(tidyverse)
+library(lubridate)
+library(here)
+library(dplyr)
+library(data.table)
+library(ggpubr)
+library(knitr)
+
+Mode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+dataf <- read_csv("data/search_data.csv")
+data_raw <- read_csv("data/search_data.csv")
+
+```
+
+<p>Antes de mais nada devemos prestar atenção nos dados. E dando um rápido display no nosso dataset, podemos ver que existem NA's presentes na coluna <b>first_click</b>, muitos 0 na coluna <b>num_clicks</b> e existem id's repetidos em <b>session_id</b>.</p>
+
+```{r}
+kable(data_raw[1:6,], caption="Recorte dos dados")
+```
+
+<p>Nos focando na primeira coluna <b>session_id</b>, podemos ver que se filtrarmos somente as sessões distintas, o número de linhas cai pela metade. E isso pode ser um problema para nossas análises, pois teremos que sumarizar.</p>
+```{r}
+as.numeric(count(dataf))
+
+data_fitered <- dataf %>%
+    distinct(session_id)
+as.numeric(count(data_fitered))
+
+```
+
+<p>Para a coluna <b>first_click</b>, podemos ver que a coluna possui um número muito grande de NA's, nesse caso dependendo da questão que responderemos poderemos optar por substituir esse valor por 0 (zero) ou deixar como está.</p>
+
+```{r}
+sum(is.na(data_raw$first_click))
+```
+
+<p>Por último, nessa análise prévia, podemos ver aqui a coluna <b>num_clicks</b> que a quantidade de 0 é quase identica a quantidade de NA's do <b>first_click</b>, isso se dá pela forma como essa variável foi construida. Mas nesse caso, usaremos essa característica como base para filtrar os dados e construir a resposta necessária de algumas perguntas.</p>
+
+```{r}
+data_fitered <- dataf %>%
+    filter(num_clicks == 0)
+as.numeric(count(data_fitered))
+```
+
+# PRIMEIRA PERGUNTA 
+
+<h3><i>What is our daily overall clickthrough rate? How does it vary between the groups?</i></h3>
+<p>Para calcularmos o valor da relação (rate) em questão, precisamos antes verificar como se comportam os dados no geral e no grupo particular, que são aquelas sessões que tiveram <b>num_clicks</b> > 0.</p>
+<p>Primeiramente vamos sumarizar os dados, de modo que não tenhamos mais de uma mesma sessão repetida nos dados. Pela definição de <i>overall clickthrough</i> as sessões repetidas não fazem parte do calculo dessa relação. Então pegamos a moda dos grupos por <b>session_id</b> e a ultima data da sessões repetidas, as quais acontecem no mesmo dia.</p>
+<p>Após isso foi feita a contagem agrupada por data e grupo. Note que aqui, para cada um dos dias existem dois valores, um para cada grupo.</p>
+
+```{r}
+data_grouped_day_1 <- data_raw %>%
+    mutate(date = floor_date(session_start_date, unit='day')) %>%
+    group_by(session_id) %>%
+    summarise( 
+      group = Mode(group), 
+      date = last(date)
+    ) %>%
+    group_by(date, group) %>%
+    count(date, group)
+
+kable(data_grouped_day_1[1:6,], caption="Recorte dos dados")    
+
+
+
+
+```
+
+<p>Para visualizarmos isso melhor, o gráfico de linha através do tempo, em relação a quantidade nos dá noção das buscas no geral na semana. Podemos ver um comportamento bem semelhante para os dois grupos e ainda mais que isso, um declive em um intervalo de 3 dias que podemos supor aqui que seja um final de semana. Ainda podemos notar aqui, que o grupo B contém mais sessões que o A.</p>
+
+```{r}
+data_grouped_day_1$group <- factor(data_grouped_day_1$group)
+ggplot(data_grouped_day_1, aes(x=date, y=n, colour=group)) + geom_line()
+
+```
+
+
+<p>Fazendo a mediana dos dias em geral temos que o grupo A tem mediana de 77% o valor da mediana do grupo B.</p>
+
+```{r}
+data_median_total <- data_grouped_day_1 %>%
+    group_by(group) %>%
+    summarise(
+        n = median(n)
+    )
+   
+data_median_total
+```
+
+<p>Para calcular concretizarmos o calculo da relação, ainda precisamos filtrar a segunda parte dos dados, o caso particular,que são aqueles os quais <b>num_clicks</b> > 0. O resultado da filtragem e sumarização abaixo é semelhante ao dos dados do caso geral.</p>
+
+```{r}
+data_grouped_day_2 <- data_raw %>%
+    filter(num_clicks > 0) %>%
+    mutate(date = floor_date(session_start_date, unit='day')) %>%
+    group_by(session_id) %>%
+    summarise( 
+      group = Mode(group), 
+      date = last(date)
+    ) %>%
+    group_by(date, group) %>%
+    count(date, group)
+kable(data_grouped_day_2[1:6,], caption="Recorte dos dados")    
+```
+
+<p>Fazendo o mesmo gráfico de linhas para esse caso particular temos que, o os valores se inverteram para os grupos, no caso o grupo A apresenta valores acima do grupo B. E ainda mais que isso, o grupo B não possui mais o mesmo comportamento (pelo menos não é tão visível) que anteriormente, da queda e depois subida após um certo período de tempo.</p>
+
+```{r}
+data_grouped_day_2$group <- factor(data_grouped_day_2$group)
+ggplot(data_grouped_day_2, aes(x=date, y=n, colour=group)) + geom_line()
+```
+
+<p>No mesmo estudo que fizemos antes para o grupo geral, aqui vemos que nesse caso particular a mediana do grupo B chega a ser <b>três vezes</b> menor que a do grupo A.</p>
+
+```{r}
+data_median_parcial <- data_grouped_day_2 %>%
+    group_by(group) %>%
+    summarise(
+        n = median(n)
+    )
+data_median_parcial
+```
+
+<p><b>RESPOSTA:</b></p>
+<p>Calculando a relação propriamente dita temos que, o <i>overall clickthrough</i>, em todo o periodo de tempo, é muito maior para o grupo A do que para o grupo B.</p>
+
+
+```{r}
+data_ratio <- data.frame(data_median_parcial$group, data_median_parcial$n / data_median_total$n )
+x <- c("group", "rate")
+colnames(data_ratio) <- x
+data_ratio
+```
+
+<p>Se virmos ainda de forma gráfica, em um <b>boxplot</b>, podemos perceber que os dados são bem mais concentrados próximos a mediana para o grupo A. Já o grupo B é um pouco mais bem distribuido, e com a mediana bem mais baixa.</p>
+
+```{r}
+data_ratio <- data.frame(data_grouped_day_1$date, data_grouped_day_1$group, data_grouped_day_2$n / data_grouped_day_1$n )
+x <- c("date", "group", "n")
+colnames(data_ratio) <- x
+ggplot(data_ratio, aes(x = group, y = n, fill = group)) + geom_violin()
+```
+
+
+# SEGUNDA PERGUNTA
+
+<h3><i>Which results do people tend to try first? How does it change day-to-day?</i></h3>
+<p>Para responder esse questionamento precisamos estudar a variável <b>first_click</b>, que nos indica quais resultados os usuários clicam primeiro. Após analisarmos essa variável de forma separada, aplicaremos o tempo na visualização para responder a pergunta.</p>
+<p>Podemos ver que que para os 10 primeiros resultados o número de repetições é decrescente.</p>
+
+```{r}
+total_click_occurrency <- data_raw %>%
+    na.omit(col = 'first_click') %>%
+    group_by(first_click) %>%
+    count(first_click)
+head(total_click_occurrency,10)
+```
+
+<p>O comportamento também já é diferente, no caso aqui para os 10 últimos, eles permanecem os mesmos, mas ainda sim bem menores que os primeiros valores.</p>
+
+```{r}
+tail(total_click_occurrency,10)
+```
+
+<p>Tendo essas últimas observações em mente, o gráfico abaixo, limitado até o <b>first_click</b> == 25, podemos perceber melhor esse comportamento de decrescimento, quase de forma exponencial.</p>
+
+
+```{r}
+first_click_occurrency <- data_raw %>%
+    na.omit(col = 'first_click') %>%
+    filter(first_click <= 25) %>%
+    group_by(first_click) %>%
+    count(first_click)
+ggplot(first_click_occurrency, aes(x=first_click, y=n)) + geom_bar(stat = 'identity')
+```
+
+<p>Vendo esta quantidade de dados para cada valor do <b>first_click</b>, podemos ainda tentar entender o comportamento das médias de <b>results</b> conforme o valor vai aumentando. Para isso a visualização <b>scatter plot</b> + <b>line plot</b> é o ideal para detectarmos comportamentos, de decrescimento ou crescimento.</p>
+<p>Podemos perceber que após o valor 24 do eixo X as médias variam muito. Isso se deve ao fato de ter poucos dados de <b>first_click</b> para valores acima de 24, e então a média é facilmente influenciada por um valor. Tendo muitas vezes sido definida por apenas um valor como foi mostrado anteriormente.</p>
+
+```{r}
+first_click_occurrency <- data_raw %>%
+    na.omit(col = 'first_click') %>%
+    filter(first_click <= 50) %>%
+    group_by(first_click) 
+
+
+temp <- data_raw %>%
+    na.omit(col = 'first_click') %>%
+    filter(first_click <= 25) %>%
+    count(first_click)
+
+ggplot(first_click_occurrency, aes(x = first_click, y = results, group=1)) + geom_point(stat='summary', fun.y=mean) + stat_summary(fun.y=mean, geom="line") 
+```
+
+
+<p><b>REPOSTA:</b></p>
+<p>Para responder a pergunta um grid com quatro métricas de variação e de medição para os dados de <b>first_click</b> dentro do intervalo de tempo. Podemos concluir que tanto para a moda como para a mediana os valores se concentram em 1 e isso não varia durante a semana, a não ser para a média.</p>
+
+```{r}
+data_clicks_day <- data_raw %>%
+    mutate(date = floor_date(session_start_date, unit = 'day')) %>%
+    select(date, first_click) %>%
+    na.omit(col = 'first_click')
+
+mode_plot <- ggplot(data_clicks_day, aes(x = date, y = first_click, group=1)) + geom_point(stat='summary', fun.y=Mode) + stat_summary(fun.y=Mode, geom="line") 
+
+mean_plot <- ggplot(data_clicks_day, aes(x = date, y = first_click, group=1)) + geom_point(stat='summary', fun.y=mean) + stat_summary(fun.y=mean, geom="line") 
+
+median_plot <- ggplot(data_clicks_day, aes(x = date, y = first_click, group=1)) + geom_point(stat='summary', fun.y=median) + stat_summary(fun.y=median, geom="line") 
+
+box_plot <- ggplot(filter(data_clicks_day, first_click < 1000), aes(x = date, y = first_click, group=date)) + geom_boxplot() + scale_y_log10()
+
+
+ggarrange(mode_plot, mean_plot, median_plot, box_plot, 
+          labels = c("Mode", "Mean", "Median",  "Box"),
+          ncol = 2, nrow = 2)
+```
+
+
+# TERCEIRA PERGUNTA 
+
+<h3><i>What is our daily overall zero results rate? How does it vary between the groups?</i></h3>
+<p>A terceira pergunta é bastante semelhante a primeira, porém pela definição de <i>overall zero</i> podemos ver que sessões repetidas são parte do cálculo.</p>
+<p>Diferentemente da primeira questão aqui só resumiremos os cálculos e vamos para a resposta da pergunta. E trabalharemos aqui com a variável <b>results</b> ao invés de <b>first_click</b>. Filtrando <b>results</b> == 0, teremos a definição de <i>overall zero</i>.</p>
+<p>Note aqui o mesmo agrupamento, e mesma descrição, dos dados de grupo para <b>results</b>.</p>
+```{r}
+
+data_grouped_results_0 <- data_raw %>%
+    filter(results == 0) %>%
+    mutate(date = floor_date(session_start_date, unit='day')) %>%
+    select(date, group) %>%
+    group_by(date, group) %>%
+    count(date, group) 
+kable(data_grouped_results_0[1:10,], caption="Recorte dos dados")   
+
+```
+
+<p>E aqui o agrupamento sem o filtro de <b>results</b> == 0.</p>
+
+```{r}
+data_grouped_results_total <- data_raw %>%
+    mutate(date = floor_date(session_start_date, unit='day')) %>%
+    select(date, group) %>%
+    group_by(date, group) %>%
+    count(date, group) 
+kable(data_grouped_results_total[1:10,], caption="Recorte dos dados")   
+```
+
+<p><b>RESPOSTA:</b></p>
+<p>Da mesma forma aqui temos o <b>boxplot</b>, dividido por grupos, vemos que para o grupo B a relação tende a ser maior, os dados estão concentrados mais acima que a mediana do grupo A e inclusive estão menos dispersos.</p>
+
+```{r}
+data_ratio <- data.frame(data_grouped_results_0$date, data_grouped_results_0$group, data_grouped_results_0$n / data_grouped_results_total$n )
+x <- c("date", "group", "n")
+colnames(data_ratio) <- x
+ggplot(data_ratio, aes(x = group, y = n, fill = group)) + geom_boxplot()
+```
+
+
+# QUARTA PERGUNTA 
+
+<h3><i>Let session length be approximately the time between the first event and the last event in a
+session. Choose a variable from the dataset and describe its relationship to session length.
+Visualize the relationship.</i></h3>
+<p>Aqui temos liberdade de usarmos a abordagem que quisermos para essa relação. Então o estudo aqui feito foi uma matriz de correlação e depois uma visualização, das duas variáveis que tiveram correlação.</p>
+<p>Antes de fazermos a matriz a variável <b>group</b>, foi alterada para valores inteiros 1 e 0. Sendo A == 0 e B == 1.</p>
+
+```{r}
+
+data_grouped_session_length <- data_raw %>%
+    group_by(session_id) %>%
+    summarise( 
+      group = Mode(group), 
+      date = as.numeric((max(session_start_date) - min(session_start_date))),
+      index = Mode(search_index),
+      first_click = median(first_click),
+      results = median(results) 
+    ) 
+    
+data_grouped_session_length$session_id <- NULL
+
+data_grouped_session_length$group <- ifelse(data_grouped_session_length$group  == 'a', 0,1)
+data_grouped_session_length[is.na(data_grouped_session_length)] <- 0
+
+kable(data_grouped_session_length[1:10,], caption="Recorte dos dados")  
+```
+
+<p>Na matriz de confusão podemos ver que as variáveis <b>group</b> e <b>date</b> estão correlacionadas negativamente e elas que serão abordadas na visualização a seguir.</p>
+
+```{r, warning=FALSE}
+cormat <- cor(data_grouped_session_length)
+head(cormat)
+```
+
+<p>Podemos ver aqui no <b>boxplot</b> que as medianas se parecem muito da variáveil em relação aos grupos e que além disso a sua distribuição para cada um dos grupos é muito parecida.</p>
+
+```{r, warning=FALSE}
+ggplot(data_grouped_session_length, aes(group                                                                                           ,date)) +  geom_boxplot(aes(group=group)) + scale_y_log10()
+```
+

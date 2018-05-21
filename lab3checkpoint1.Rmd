@@ -1,0 +1,378 @@
+---
+title: 'Lab 3, CP 1: Inferência via ICs'
+author: "Caio Oliveira"
+date: "May 16, 2018"
+output:
+ html_document:
+  toc: true
+  toc_float: true
+---
+
+# INTRODUÇÃO 
+
+<p>Nesse laboratório o objetivo era utilizar os [dados do Wikimedia]("https://github.com/wikimedia-research/Discovery-Hiring-Analyst-2016/raw/master/events_log.csv.gz") para resolver a  mesma série de perguntas do [laboratório anterior](http://rpubs.com/Caio-batista/lab2cp4), mas dessa vez se utilizando de <b>reamostragem</b> e <b>intervalos de confiança</b>. Nesse laboratório, apesar de ter a mesma quantidade de perguntas do outro laboratório mencionado, a última questão é diferente, e se baseia em um teste A/A e não A/B.</p>
+<p>Para cada uma das perguntas é explicada como foi feita a reamostragem e como podemos entender a visualização dos dados para assim ter a resposta.</p>
+
+<p>Neste setup além de carregar os dados e as bibliotecas da linguagem que serão necessárias, também é definida aqui a função Mode, que simula a métrica Moda, que vai ser muito útil durante todas as respostas para sumarização.</p>
+
+```{r setup, include=FALSE}
+library(boot) # <-- Para bootstrap
+library(readr)
+library(Rmisc)
+library(dplyr)
+library(lubridate)
+library(timeDate)
+library(ggplot2)
+library(knitr)
+
+Mode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+
+amostra <- read_csv("data/search_data.csv") 
+dados <- amostra
+dados$session_id <- as.character(dados$session_id)
+dados$session_start_date <- as.Date(dados$session_start_date)
+dados$group <- as.character(dados$group)
+```
+
+# Primeira pergunta 
+
+<h3><i>What is our daily overall clickthrough rate? How does it vary between the groups?</i></h3>
+<p>Para calcularmos o valor da relação (rate) em questão, precisamos antes verificar como se comportam os dados no geral e no grupo particular, que são aquelas sessões que tiveram <b>num_clicks</b> > 0.</p>
+<p>Aqui fazemos o mesmo método do laboratório anterior para a sumarização dos dados e o cálculo dessa relação. E reafirmamos, a diferença nítida nos valores dessa relação para os grupos A e B. Sendo a relação em A bem maior e mais concentrada que em B.</p>
+
+```{r}
+data_grouped_day_1 <- amostra %>%
+    mutate(date = as.character.Date(floor_date(session_start_date, unit='day'))) %>%
+    group_by(session_id) %>%
+    summarise( 
+      group = Mode(group), 
+      date = last(date)
+    ) %>%
+    group_by(date, group) %>%
+    count(date, group)
+
+data_grouped_day_2 <- dados %>%
+    filter(num_clicks > 0) %>%
+    mutate(date = floor_date(session_start_date, unit='day')) %>%
+    group_by(session_id) %>%
+    summarise( 
+      group = Mode(group), 
+      date = last(date)
+    ) %>%
+    group_by(date, group) %>%
+   count(date, group)
+
+data_ratio <- data.frame(data_grouped_day_1$date, data_grouped_day_1$group, data_grouped_day_2$n / data_grouped_day_1$n )
+data_ratio <- na.omit(data_ratio)
+x <- c("date", "group", "n")
+colnames(data_ratio) <- x
+ggplot(data_ratio, aes(x = group, y = n, fill = group)) + geom_violin()
+
+```
+
+<p>Para esse caso usaremos uma biblioteca chamada <b>boot</b> (Bootstrap) que faz resample dos dados para amostras.</p>
+<p>No nosso caso para responder a pergunta, usaremos 1000 repetições da amostra diferentes, com 3 tipos de cálculo para o intervalo de confiança. São eles: <b>basic, bca </b>e<b> perc</b>.</p>
+<p>A seguir estão plotados os gráficos referentes a reamostragem, sua distribuição bem como a correção entre os fatores. Para esse caso, na função de reamostragem, utilizamos a mediana e não a média, por causa dos valores extremos que existem, principalmente no grupo A.</p>
+
+```{r}
+func.boot<- function(dado, indices){
+    d = dado %>% 
+      slice(indices) %>% 
+      group_by(group) %>% 
+      summarise(median_group = median(n)) %>% 
+      pull(median_group)
+    
+    return(d[1] - d[2])
+}
+res.boot <- boot(data = data_ratio, 
+                 statistic = func.boot, 
+                 R = 1000)
+plot(res.boot)
+boot.ci(boot.out = res.boot, conf = 0.95, type = "basic")
+boot.ci(boot.out = res.boot, conf = 0.95, type = "bca")
+boot.ci(boot.out = res.boot, conf = 0.95, type = "perc")
+```
+
+<p><b>RESPOSTA:</b></p>
+<p>Com o cálculo da reamostragem vemos que o valor do intervalo de confiança está entre as duas distribuições. E mais particulamente, exatamente no meio das duas medianas. O que nos mostra que mesmo com a reamostragem os dados referentes ao <i>overall clickthrough</i> são os mesmos com 95% de confiança.</p>
+
+# Segunda pergunta 
+
+<h3><i>Which results do people tend to try first? How does it change day-to-day?</i></h3>
+<p>Essa pergunta não pode ser respondida com todos os dados que temos, pois como analisamos no outro laboratório, a mediana e a moda desses dados, para o <b>first_click</b>, é majoritariamente 1, e o estudo interessante a se fazer é do pior caso. Ou dos piores <b>n</b> casos.</p>
+<p>Então primeiramente aqui mostramos os dados filtrados, depois nossa análise dos grupos e por fim, a análise durante o tempo.</p>
+
+```{r}
+results <- dados %>%
+    mutate(day = floor_date(session_start_date, unit='day')) %>%
+    filter(first_click != 'NA') 
+
+nrow(results)
+
+results <- results %>%
+    arrange(first_click) %>%
+    group_by(group) %>%
+    top_n(n = 500, wt = first_click)
+
+
+
+```
+
+<p>A escolha para essa pergunta foi selecionar os top 500 <b>first_click</b>, de cada grupo. E a partir dessa amostra, fazer uma reamostragem utilizando o <b>bootstrap</b>. Podemos perceber que os dados no gráfico de distribuição se concentram abaixo de 50 do eixo Y, apesar da grande dispersão do grupo A.</p>
+
+```{r}
+results %>% 
+    ggplot(aes(x = day, y = first_click, color = group, group = group)) +
+    geom_boxplot() +
+    theme(plot.title = element_text(hjust = 0.5)) + scale_y_log10()
+
+results %>% 
+    ggplot(aes(x= group, 
+               y = first_click,
+               color= group, fill = group)) +
+    geom_violin() +
+    theme(plot.title = element_text(hjust = 0.5), legend.position="none") + scale_y_log10()
+```
+
+<p>Fazendo a reamostragem temos a mesma semelhança nos resultados acima apresentados, nos dois gráficos. Os valores ficam entre 16 e 26 em seus extremos, com 95% de confiança. Vale ressaltar que a métrica aqui, como na questão anterior também foi a mediana e não a média.</p>
+
+```{r}
+func.boot <- function(dado, indices){
+    dado <- dado %>% 
+      slice(indices) %>% 
+      group_by(group) %>% 
+      summarise(median_group = median(first_click)) %>% 
+      pull(median_group)
+    
+    return(dado[1] - dado[2])
+}
+
+res.boot <- boot(data = results, 
+                   statistic = func.boot,
+                   R = 2000)
+
+boot.ci(res.boot, conf = 0.95, type = "basic")
+boot.ci(res.boot, conf = 0.95, type = "perc")
+boot.ci(res.boot, conf = 0.95, type = "bca")
+```
+
+<p>Aqui é a construção da resposta, primeiro a sumarização dos dados que foi usado na visualização a seguir e depois, a melhor forma de visualizar os intervalos de confiança para cada um dos grupos e por dia.</p>
+
+```{r}
+df2 <- summarySE(results, measurevar="first_click", 
+                    groupvars=c("day", "group"), na.rm = TRUE, conf.interval=.95)
+ 
+df2$day <- as.factor(df2$day)
+df2
+
+p<- ggplot(df2, aes(x=day, y=first_click, fill=group)) + 
+  geom_bar(stat="identity", color="black", 
+           position=position_dodge()) +
+  geom_errorbar(aes(ymin=first_click-ci, ymax=first_click+ci), width=.2,
+                 position=position_dodge(.9))  
+print(p)
+
+```
+
+<p>Já podemos perceber a tendência de valores maiores para o grupo A. Entretanto os intervalos de confiança do grupo B não se destacam nessa escala. Se reduzirmos para log 10 podemos visualizar melhor e responder com mais precisão.</p>
+
+```{r, warning=FALSE}
+print(p + scale_y_log10())
+```
+
+
+<p><b>REPOSTA:</b></p>
+<p>Podemos ver que com uma confiança de 95% os <b>first_click</b> do grupo A são maiores que os do grupo B, para todos os dias da semana. Entretanto podemos ver também que o grupo A tem uma variância maior que o grupo B, mais constante e com o intervalo menor.</p>
+
+# Terceira pergunta 
+
+<h3><i>What is our daily overall zero results rate? How does it vary between the groups?</i></h3>
+<p>A terceira pergunta é bastante semelhante a primeira, e de forma análoga ao outro laboratório, calcularemos a relação (<i>overall zero</i>) da mesma forma.</p>
+<p>A parte da reamostragem será feita da mesma forma que para a questão 1, inclusive utilizando as mesmas formas de cálculo do intervalo de confiança, e a mediana como forma de sumarização.</p>
+<p>Podemos ver que nesse caso os valores são bem menores que na relação da primeira questão. Inclusive os intervalos de confiança da métrica.</p>
+
+```{r}
+data_grouped_results_0 <- dados %>%
+    filter(results == 0) %>%
+    mutate(date = floor_date(session_start_date, unit='day')) %>%
+    select(date, group) %>%
+    group_by(date, group) %>%
+    count(date, group) 
+
+data_grouped_results_total <- dados  %>%
+    mutate(date = floor_date(session_start_date, unit='day')) %>%
+    select(date, group) %>%
+    group_by(date, group) %>%
+    count(date, group)
+
+
+data_ratio <- data.frame(data_grouped_results_0$date, data_grouped_results_0$group, data_grouped_results_0$n / data_grouped_results_total$n )
+data_ratio <- na.omit(data_ratio)
+x <- c("date", "group", "ratio")
+colnames(data_ratio) <- x
+
+
+func.boot <- function(dado, indices){
+    d <- dado %>% 
+      slice(indices) %>% 
+      group_by(group) %>% 
+      summarise(median_group = median(ratio)) %>% 
+      pull(median_group)
+    
+    return(d[1] - d[2])
+}
+
+
+res.boot <- boot(data = data_ratio, 
+                 statistic = func.boot, 
+                 R = 1000)
+plot(res.boot)
+boot.ci(boot.out = res.boot, conf = 0.95, type = "basic")
+boot.ci(boot.out = res.boot, conf = 0.95, type = "bca")
+boot.ci(boot.out = res.boot, conf = 0.95, type = "perc")
+
+
+```
+
+<p>Da mesma forma que na questão anterior, podemos usar as <b>error bars</b> para visualizar o intervalo de confiança de cada grupo. Além da tabela de sumarização dos dados.</p>
+
+```{r}
+
+
+df3 <- summarySE(data_ratio, measurevar="ratio", 
+                    groupvars=c("group"), na.rm = TRUE, conf.interval=.95)
+
+df3$group <- as.factor(df3$group)
+df3
+
+p<- ggplot(df3, aes(x=group, y=ratio, fill=group)) + 
+  geom_bar(stat="identity", color="black", 
+           position=position_dodge()) +
+  geom_errorbar(aes(ymin=ratio-ci, ymax=ratio+ci), width=.2,
+                 position=position_dodge(.9))  
+print(p)
+```
+
+
+<p><b>RESPOSTA:</b></p>
+<p>Podemos ver que, apesar de sutil, a relação <i>overall zero</i> tende a ser maior para o grupo B.</p>
+
+# Quarta pergunta 
+
+<h3><i>o que acontece se para a pergunta 1, em vez de comparar o grupo A com o grupo B (um teste A/B), você compara metade das sessões do grupo A (escolhida aleatoriamente) com outra metade das sessões do mesmo grupo (um teste A/A)?</h3></i>
+<p>Para responder essa pergunta faremos um pouco diferente da resposta da primeira pergunta, mas com o mesmo intuito de calcular o intervalo de confiança.</p>
+<p>Primeiramente retiraremos dois sample dos dados e chamaremos de a1 e a2.</p>
+<p>Logo a seguir temos um <b>violin plot</b> mostrando a distribuição dos dados. Que não são identicos mas muito parecidos.</p>
+```{r, warning=FALSE}
+grouped_data_a <- dados %>%
+    filter(group == 'a') 
+grouped_data_a1 <- grouped_data_a[sample(1:nrow(grouped_data_a), 12000,
+  	replace=FALSE),]
+
+grouped_data_a1$group <- 'a1'
+    
+grouped_data_a2 <- grouped_data_a[sample(1:nrow(grouped_data_a), 12000,
+  	replace=FALSE),]
+
+grouped_data_a2$group <- 'a2'
+
+grouped_data_a <- rbind(grouped_data_a1,grouped_data_a2) 
+
+   
+grouped_data_a %>% 
+    ggplot(aes(x= group, 
+               y = first_click,
+               color= group, fill = group)) +
+    geom_violin() +
+    theme(plot.title = element_text(hjust = 0.5), legend.position="none") + scale_y_log10()
+
+```
+
+<p>Para o grupo a1 calculamos aqui a relação dele e sumarizamos os dados, tendo como consequência seu intervalo de confiança com 95% de confiabilidade.</p>
+
+```{r}
+data_grouped_day_1 <- grouped_data_a1 %>%
+    mutate(date = as.character.Date(floor_date(session_start_date, unit='day'))) %>%
+    group_by(session_id) %>%
+    summarise( 
+      group = Mode(group), 
+      date = last(date)
+    ) %>%
+    group_by(date) %>%
+    count(date)
+
+data_grouped_day_2 <- grouped_data_a1 %>%
+    filter(num_clicks > 0) %>%
+    mutate(date = floor_date(session_start_date, unit='day')) %>%
+    group_by(session_id) %>%
+    summarise( 
+      group = Mode(group), 
+      date = last(date)
+    ) %>%
+    group_by(date) %>%
+   count(date)
+
+data_ratio <- data.frame(data_grouped_day_1$date,  data_grouped_day_2$n / data_grouped_day_1$n )
+data_ratio <- na.omit(data_ratio)
+x <- c("date", "ratio")
+colnames(data_ratio) <- x
+
+
+df4 <- summarySE(data_ratio, measurevar="ratio",na.rm = TRUE, conf.interval=.95)
+
+df4$N <- as.factor(df4$N)
+df4
+
+
+
+```
+
+
+<p>Mesma coisa para o grupo a2.</p>
+
+```{r}
+data_grouped_day_1 <- grouped_data_a2 %>%
+    mutate(date = as.character.Date(floor_date(session_start_date, unit='day'))) %>%
+    group_by(session_id) %>%
+    summarise( 
+      group = Mode(group), 
+      date = last(date)
+    ) %>%
+    group_by(date) %>%
+    count(date)
+
+data_grouped_day_2 <- grouped_data_a2 %>%
+    filter(num_clicks > 0) %>%
+    mutate(date = floor_date(session_start_date, unit='day')) %>%
+    group_by(session_id) %>%
+    summarise( 
+      group = Mode(group), 
+      date = last(date)
+    ) %>%
+    group_by(date) %>%
+   count(date)
+
+data_ratio <- data.frame(data_grouped_day_1$date,  data_grouped_day_2$n / data_grouped_day_1$n )
+data_ratio <- na.omit(data_ratio)
+x <- c("date", "ratio")
+colnames(data_ratio) <- x
+
+
+df4 <- summarySE(data_ratio, measurevar="ratio",na.rm = TRUE, conf.interval=.95)
+
+df4$N <- as.factor(df4$N)
+df4
+
+
+```
+
+<p><b>RESPOSTA:</b></p>
+<p>Apesar do grupo a2 ser 0.1% maior na relação que o grupo a1, podemos concluir que os dois grupos tem o mesmo valor para a relação <i>overall clickthrough</i>, que já era esperado.</p>
+
+
+
+
